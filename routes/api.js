@@ -1,95 +1,68 @@
 'use strict';
 
-const { MongoClient } = require('mongodb');
 const crypto = require('crypto');
+const fetch = require('node-fetch'); // npm install node-fetch@2
 
-const MONGO_URI = process.env.MONGO_URI;
-let client;
-let collection;
+// Likes en memoria (clave = símbolo de stock)
+const likesMemory = {};
 
-// Inicializar conexión a MongoDB solo si MONGO_URI está disponible
-if (MONGO_URI) {
-  client = new MongoClient(MONGO_URI);
-  (async () => {
-    try {
-      await client.connect();
-      const db = client.db('stockchecker');
-      collection = db.collection('likes');
-      console.log('✅ Conectado a MongoDB exitosamente!');
-    } catch (err) {
-      console.error('❌ Error al conectar a MongoDB:', err);
-    }
-  })();
-} else {
-  console.warn('⚠️ MONGO_URI no encontrado. La funcionalidad de likes estará deshabilitada.');
-}
-
-module.exports = function (app) {
+module.exports = function(app) {
   app.get('/api/stock-prices', async (req, res) => {
     try {
       let { stock, like } = req.query;
-      const userIP = crypto.createHash('sha256')
-                           .update(req.ip)
-                           .digest('hex');
+      if (!stock) return res.status(400).json({ error: 'Stock query required' });
 
-      // Normalizar stock a array
-      const stocks = Array.isArray(stock) ? stock : [stock];
+      // Normalizar like parameter para manejar diferentes formatos
+      const liked = like === true || like === 'true' || like === 'on';
+      
+      // Normalizar a array y convertir a mayúsculas
+      const stocks = Array.isArray(stock) ? stock.map(s => s.toUpperCase()) : [stock.toUpperCase()];
 
-      // Obtener info de cada acción
-      const results = await Promise.all(stocks.map(async sym => {
-        const resp = await fetch(
-          `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${sym}/quote`
-        );
-        const data = await resp.json();
+      // Hash de IP para limitar 1 like por IP (usando trust proxy)
+      const clientIP = req.ips[0] || req.ip;
+      const userIP = crypto.createHash('sha256').update(clientIP).digest('hex');
 
-        if (!data || !data.symbol || data === 'Unknown symbol') {
-          return { stock: sym, error: 'Invalid symbol' };
-        }
+      // Obtener info de cada stock
+      const results = await Promise.all(
+        stocks.map(async (sym) => {
+          const resp = await fetch(`https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${sym}/quote`);
+          const data = await resp.json();
 
-        // Likes: actualizar si corresponde y hay conexión a base de datos
-        let likesCount = 0;
-        if (collection) {
-          let likesDoc = await collection.findOne({ stock: sym });
-          if (!likesDoc) {
-            likesDoc = { stock: sym, likes: [], count: 0 };
-            await collection.insertOne(likesDoc);
+          if (!data || !data.symbol || data === 'Unknown symbol') {
+            return { stock: sym, error: 'Invalid symbol' };
           }
 
-          if (like === 'true' && !likesDoc.likes.includes(userIP)) {
-            await collection.updateOne(
-              { stock: sym },
-              { $push: { likes: userIP }, $inc: { count: 1 } }
-            );
-            likesDoc.count++;
+          // Inicializar likes en memoria
+          if (!likesMemory[sym]) likesMemory[sym] = { likes: [], count: 0 };
+
+          // Contar like si es true y no lo había hecho esta IP
+          if (liked && !likesMemory[sym].likes.includes(userIP)) {
+            likesMemory[sym].likes.push(userIP);
+            likesMemory[sym].count++;
           }
-          likesCount = likesDoc.count;
-        } else {
-          // Sin base de datos, usar valor predeterminado
-          likesCount = 0;
-        }
 
-        return {
-          stock: data.symbol,
-          price: data.latestPrice,
-          likes: likesCount
-        };
-      }));
+          return {
+            stock: data.symbol,
+            price: data.latestPrice,
+            likes: likesMemory[sym].count
+          };
+        })
+      );
 
-      // Dos acciones → calcular rel_likes
+      // Si hay dos stocks → devolver rel_likes
       if (results.length === 2) {
         const [a, b] = results;
-        const relA = a.likes - b.likes;
-        const relB = b.likes - a.likes;
         return res.json({
           stockData: [
-            { stock: a.stock, price: a.price, rel_likes: relA },
-            { stock: b.stock, price: b.price, rel_likes: relB }
+            { stock: a.stock, price: a.price, rel_likes: a.likes - b.likes },
+            { stock: b.stock, price: b.price, rel_likes: b.likes - a.likes }
           ]
         });
       }
 
-      // Una sola acción
+      // Si hay uno solo → likes normal
       return res.json({ stockData: results[0] });
+
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Internal server error' });

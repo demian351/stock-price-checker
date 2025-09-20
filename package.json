@@ -4,7 +4,7 @@
 	"description": "InfoSec project for freeCodeCamp",
 	"scripts": {
 		"start": "node server.js",
-		 "test": "mocha tests --timeout 5000"
+		"test": "mocha tests --timeout 5000"
 	},
 	"dependencies": {
 		"body-parser": "^1.15.2",
@@ -13,9 +13,10 @@
 		"cors": "^2.8.1",
 		"dotenv": "^8.6.0",
 		"express": "^4.14.0",
-		"helmet": "^3.1.0",
+		"helmet": "^7.0.0",
 		"mocha": "^3.2.0",
 		"mongodb": "^6.19.0",
+		"node-fetch": "^2.7.0",
 		"request": "^2.88.2"
 	},
 	"repository": {
