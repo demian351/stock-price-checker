@@ -4,14 +4,25 @@ const { MongoClient } = require('mongodb');
 const crypto = require('crypto');
 
 const MONGO_URI = process.env.MONGO_URI;
-const client = new MongoClient(MONGO_URI);
+let client;
 let collection;
 
-(async () => {
-  await client.connect();
-  const db = client.db('stockchecker');
-  collection = db.collection('likes');
-})();
+// Inicializar conexión a MongoDB solo si MONGO_URI está disponible
+if (MONGO_URI) {
+  client = new MongoClient(MONGO_URI);
+  (async () => {
+    try {
+      await client.connect();
+      const db = client.db('stockchecker');
+      collection = db.collection('likes');
+      console.log('✅ Conectado a MongoDB exitosamente!');
+    } catch (err) {
+      console.error('❌ Error al conectar a MongoDB:', err);
+    }
+  })();
+} else {
+  console.warn('⚠️ MONGO_URI no encontrado. La funcionalidad de likes estará deshabilitada.');
+}
 
 module.exports = function (app) {
   app.get('/api/stock-prices', async (req, res) => {
@@ -35,25 +46,32 @@ module.exports = function (app) {
           return { stock: sym, error: 'Invalid symbol' };
         }
 
-        // Likes: actualizar si corresponde
-        let likesDoc = await collection.findOne({ stock: sym });
-        if (!likesDoc) {
-          likesDoc = { stock: sym, likes: [], count: 0 };
-          await collection.insertOne(likesDoc);
-        }
+        // Likes: actualizar si corresponde y hay conexión a base de datos
+        let likesCount = 0;
+        if (collection) {
+          let likesDoc = await collection.findOne({ stock: sym });
+          if (!likesDoc) {
+            likesDoc = { stock: sym, likes: [], count: 0 };
+            await collection.insertOne(likesDoc);
+          }
 
-        if (like === 'true' && !likesDoc.likes.includes(userIP)) {
-          await collection.updateOne(
-            { stock: sym },
-            { $push: { likes: userIP }, $inc: { count: 1 } }
-          );
-          likesDoc.count++;
+          if (like === 'true' && !likesDoc.likes.includes(userIP)) {
+            await collection.updateOne(
+              { stock: sym },
+              { $push: { likes: userIP }, $inc: { count: 1 } }
+            );
+            likesDoc.count++;
+          }
+          likesCount = likesDoc.count;
+        } else {
+          // Sin base de datos, usar valor predeterminado
+          likesCount = 0;
         }
 
         return {
           stock: data.symbol,
           price: data.latestPrice,
-          likes: likesDoc.count
+          likes: likesCount
         };
       }));
 
