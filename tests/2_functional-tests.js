@@ -1,82 +1,141 @@
-const chai = require('chai');
 const chaiHttp = require('chai-http');
+const chai = require('chai');
 const assert = chai.assert;
+const server = require('../server');
 
 chai.use(chaiHttp);
 
-const server = require('../server');
+suite('Functional Tests', function () {
 
-describe('Functional Tests', function () {
+  let testThreadId;
+  let testReplyId;
 
-  this.timeout(5000);
-
-  let firstLikes = 0;
-
-  it('Viewing one stock', done => {
+  // 1. Crear un nuevo thread
+  test('POST /api/threads/{board}', function (done) {
     chai.request(server)
-      .get('/api/stock-prices')
-      .query({ stock: 'GOOG' })
+      .post('/api/threads/test')
+      .send({ text: 'test thread', delete_password: 'pass123' })
       .end((err, res) => {
         assert.equal(res.status, 200);
-        assert.property(res.body, 'stockData');
-        assert.equal(res.body.stockData.stock, 'GOOG');
-        assert.property(res.body.stockData, 'price');
-        assert.property(res.body.stockData, 'likes');
-        firstLikes = res.body.stockData.likes;
+        assert.property(res.body, 'success');
+        assert.property(res.body, 'thread_id');
+        testThreadId = res.body.thread_id;
         done();
       });
   });
 
-  it('Viewing one stock and liking it', done => {
+  // 2. Ver los 10 threads más recientes con 3 replies
+  test('GET /api/threads/{board}', function (done) {
     chai.request(server)
-      .get('/api/stock-prices')
-      .query({ stock: 'GOOG', like: true })
+      .get('/api/threads/test')
       .end((err, res) => {
         assert.equal(res.status, 200);
-        assert.property(res.body, 'stockData');
-        assert.equal(res.body.stockData.stock, 'GOOG');
-        assert.isAtLeast(res.body.stockData.likes, firstLikes + 1);
+        assert.isArray(res.body);
+        assert.isAtMost(res.body.length, 10);
+        if (res.body.length > 0) {
+          assert.property(res.body[0], 'replies');
+          assert.isAtMost(res.body[0].replies.length, 3);
+        }
         done();
       });
   });
 
-  it('Viewing the same stock and liking it again (should not increase likes)', done => {
+  // 3. Borrar un thread con contraseña incorrecta
+  test('DELETE /api/threads/{board} wrong password', function (done) {
     chai.request(server)
-      .get('/api/stock-prices')
-      .query({ stock: 'GOOG', like: true })
+      .delete('/api/threads/test')
+      .send({ thread_id: testThreadId, delete_password: 'wrongpass' })
       .end((err, res) => {
         assert.equal(res.status, 200);
-        assert.property(res.body, 'stockData');
-        assert.equal(res.body.stockData.stock, 'GOOG');
-        assert.equal(res.body.stockData.likes, res.body.stockData.likes); // no debe subir
+        assert.equal(res.text, 'incorrect password');
         done();
       });
   });
 
-  it('Viewing two stocks', done => {
+  // 4. Reportar un thread
+  test('PUT /api/threads/{board}', function (done) {
     chai.request(server)
-      .get('/api/stock-prices')
-      .query({ stock: ['GOOG', 'MSFT'] })
+      .put('/api/threads/test')
+      .send({ thread_id: testThreadId })
       .end((err, res) => {
         assert.equal(res.status, 200);
-        assert.isArray(res.body.stockData);
-        assert.equal(res.body.stockData.length, 2);
-        assert.property(res.body.stockData[0], 'rel_likes');
-        assert.property(res.body.stockData[1], 'rel_likes');
+        assert.equal(res.text, 'reported');
         done();
       });
   });
 
-  it('Viewing two stocks and liking them', done => {
+  // 5. Crear un nuevo reply
+  test('POST /api/replies/{board}', function (done) {
     chai.request(server)
-      .get('/api/stock-prices')
-      .query({ stock: ['GOOG', 'MSFT'], like: true })
+      .post('/api/replies/test')
+      .send({ thread_id: testThreadId, text: 'test reply', delete_password: 'replypass' })
       .end((err, res) => {
         assert.equal(res.status, 200);
-        assert.isArray(res.body.stockData);
-        assert.equal(res.body.stockData.length, 2);
-        assert.property(res.body.stockData[0], 'rel_likes');
-        assert.property(res.body.stockData[1], 'rel_likes');
+        assert.property(res.body, 'success');
+        assert.property(res.body, 'reply_id');
+        testReplyId = res.body.reply_id;
+        done();
+      });
+  });
+
+  // 6. Ver un thread con todos los replies
+  test('GET /api/replies/{board}', function (done) {
+    chai.request(server)
+      .get('/api/replies/test')
+      .query({ thread_id: testThreadId })
+      .end((err, res) => {
+        assert.equal(res.status, 200);
+        assert.property(res.body, 'replies');
+        assert.isArray(res.body.replies);
+        assert.property(res.body.replies[0], 'text');
+        done();
+      });
+  });
+
+  // 7. Borrar un reply con contraseña incorrecta
+  test('DELETE /api/replies/{board} wrong password', function (done) {
+    chai.request(server)
+      .delete('/api/replies/test')
+      .send({ thread_id: testThreadId, reply_id: testReplyId, delete_password: 'badpass' })
+      .end((err, res) => {
+        assert.equal(res.status, 200);
+        assert.equal(res.text, 'incorrect password');
+        done();
+      });
+  });
+
+  // 8. Reportar un reply
+  test('PUT /api/replies/{board}', function (done) {
+    chai.request(server)
+      .put('/api/replies/test')
+      .send({ thread_id: testThreadId, reply_id: testReplyId })
+      .end((err, res) => {
+        assert.equal(res.status, 200);
+        assert.equal(res.text, 'reported');
+        done();
+      });
+  });
+
+  // 9. Borrar un reply con contraseña correcta
+  test('DELETE /api/replies/{board} correct password', function (done) {
+    chai.request(server)
+      .delete('/api/replies/test')
+      .send({ thread_id: testThreadId, reply_id: testReplyId, delete_password: 'replypass' })
+      .end((err, res) => {
+        assert.equal(res.status, 200);
+        assert.equal(res.text, 'success');
+        done();
+      });
+  });
+
+  // 10. Borrar un thread con contraseña correcta
+  test('DELETE /api/threads/{board} correct password', function (done) {
+    chai.request(server)
+      .delete('/api/threads/test')
+      .send({ thread_id: testThreadId, delete_password: 'pass123' })
+      .end((err, res) => {
+        assert.equal(res.status, 200);
+        assert.equal(res.text, 'success');
         done();
       });
   });

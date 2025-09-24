@@ -1,78 +1,76 @@
 'use strict';
 
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const helmet = require('helmet');
+const express     = require('express');
+const bodyParser  = require('body-parser');
+const cors        = require('cors');
+const helmet      = require('helmet');
 
-const apiRoutes = require('./routes/api.js');
+const apiRoutes        = require('./routes/api.js');
 const fccTestingRoutes = require('./routes/fcctesting.js');
-const runner = require('./test-runner');
+const runner           = require('./test-runner');
 
 const app = express();
 
-// Configuración para Replit environment  
-app.set('trust proxy', true);
+// ---------- 🔐 Configuración Helmet (tests 2–13) ----------
+app.use(helmet.hidePoweredBy());                          // test 1
+app.use(helmet.frameguard({ action: 'sameorigin' }));     // test 2
+app.use(helmet.dnsPrefetchControl());                     // test 3
+app.use(helmet.referrerPolicy({ policy: 'same-origin' }));// test 4
+app.use(helmet.noSniff());                                // test 5
+app.use(helmet.xssFilter());                              // test 6
+app.use(helmet.ieNoOpen());                               // test 7
+app.use(helmet.hsts({ maxAge: 90 * 24 * 60 * 60, force: true })); // test 8
+app.use(helmet.noCache());                                // test 9
+app.use(helmet.contentSecurityPolicy({                    // test 10–13
+  directives: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", 'trusted-cdn.com']
+  }
+}));
+// ----------------------------------------------------------
 
-// Middleware de seguridad con CSP
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'"],
-      },
-    },
-    crossOriginResourcePolicy: { policy: 'same-site' },
-    xContentTypeOptions: true,
-  })
-);
-
-// Archivos estáticos
 app.use('/public', express.static(process.cwd() + '/public'));
 
-// CORS (solo abierto para compatibilidad con FCC)
-app.use(cors({ origin: '*' }));
+app.use(cors({ origin: '*' })); // FCC necesita CORS abierto
 
-// Parseo de body con límite de 100kb
-app.use(bodyParser.json({ limit: '100kb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '100kb' }));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-// Index page
-app.route('/').get((req, res) => {
-  res.sendFile(process.cwd() + '/views/index.html');
-});
-
-// FCC Testing routes
+// Rutas FCC
 fccTestingRoutes(app);
 
-// API routes
+// Rutas API
 apiRoutes(app);
 
-// 404 Not Found
-app.use((req, res) => {
-  res.status(404).type('text').send('Not Found');
+// Página principal
+app.route('/')
+  .get(function (req, res) {
+    res.sendFile(process.cwd() + '/views/index.html');
+  });
+
+// Error 404
+app.use(function (req, res, next) {
+  res.status(404)
+    .type('text')
+    .send('Not Found');
 });
 
-// Puerto dinámico Replit
-const PORT = process.env.PORT || 5000;
-const listener = app.listen(PORT, () => {
-  console.log('Your app is listening on port ' + listener.address().port);
-
-  // Corre tests solo si NODE_ENV=test
+// Start server
+const port = process.env.PORT || 3000;
+app.listen(port, function () {
+  console.log("Listening on port " + port);
   if (process.env.NODE_ENV === 'test') {
     console.log('Running Tests...');
-    setTimeout(() => {
+    setTimeout(function () {
       try {
         runner.run();
       } catch (e) {
+        let error = e;
         console.log('Tests are not valid:');
-        console.error(e);
+        console.log(error);
       }
-    }, 3500);
+    }, 1500);
   }
 });
 
-module.exports = app; // para FCC testing
+module.exports = app;
